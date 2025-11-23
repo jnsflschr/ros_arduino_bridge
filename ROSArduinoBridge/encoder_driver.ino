@@ -188,18 +188,28 @@ ISR(PCINT1_vect)
 long readEncoder(int i)
 {
 #if defined(ESP32)
+  // Accumulate PCNT (16-bit) counts into a software 32-bit total and clear hardware counter
+  // to avoid nearing the ±32767 hardware limits which can cause velocity estimation spikes.
+  static long left_total_counts = 0;
+  static long right_total_counts = 0;
+
   int16_t count = 0;
   if (i == LEFT)
   {
     pcnt_get_counter_value(left_pcnt_unit, &count);
+    left_total_counts += (long)count;              // accumulate signed delta
+    pcnt_counter_clear(left_pcnt_unit);            // reset hardware counter to 0 for next window
+    esp32_left_enc_pos_shadow = left_total_counts; // keep shadow in sync for any external use
+    return left_total_counts;
   }
   else
   {
     pcnt_get_counter_value(right_pcnt_unit, &count);
+    right_total_counts += (long)count;
+    pcnt_counter_clear(right_pcnt_unit);
+    esp32_right_enc_pos_shadow = right_total_counts;
+    return right_total_counts;
   }
-  // Optionally update shadow variable if needed elsewhere, though direct read is better
-  // if (i == LEFT) esp32_left_enc_pos_shadow = count; else esp32_right_enc_pos_shadow = count;
-  return (long)count;
 #else // AVR
   long val;
   noInterrupts(); // Protect read of volatile variable
