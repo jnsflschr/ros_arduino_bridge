@@ -68,7 +68,7 @@ void resetPID(){
 void doPID(SetPointInfo * p) {
   long Perror;
   long output;
-  int input;
+  long input;
 
   //Perror = p->TargetTicksPerFrame - (p->Encoder - p->PrevEnc);
   input = p->Encoder - p->PrevEnc;
