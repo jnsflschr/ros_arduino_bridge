@@ -38,9 +38,6 @@ void resetEncoder(int i)
     return encoders.XAxisReset();
 }
 #elif defined(ARDUINO_ENC_COUNTER)
-volatile long left_enc_pos = 0L;
-volatile long right_enc_pos = 0L;
-
 #if defined(ESP32)
 // ESP32 specific encoder implementation using PCNT peripheral (X2 Decoding)
 // Volatile variables are not strictly necessary here as counts are read from PCNT hardware.
@@ -48,9 +45,13 @@ volatile long right_enc_pos = 0L;
 volatile long esp32_left_enc_pos_shadow = 0L;
 volatile long esp32_right_enc_pos_shadow = 0L;
 
+// Software 32-bit accumulation of PCNT counts (file-scope for clarity and single-definition)
+static long left_total_counts = 0L;
+static long right_total_counts = 0L;
+
 #define PCNT_HIGH_LIMIT 32767
 #define PCNT_LOW_LIMIT -32767
-#define PCNT_FILTER_VAL 100 // Debounce filter (100 * 12.5ns = 1.25us for 80MHz APB_CLK)
+#define PCNT_FILTER_VAL 320 // ~4.0us debounce (320 * 12.5ns) for hall sensors at ~12.9k edges/s
 
 pcnt_unit_t left_pcnt_unit = PCNT_UNIT_0;
 pcnt_unit_t right_pcnt_unit = PCNT_UNIT_1;
@@ -190,23 +191,20 @@ long readEncoder(int i)
 #if defined(ESP32)
   // Accumulate PCNT (16-bit) counts into a software 32-bit total and clear hardware counter
   // to avoid nearing the ±32767 hardware limits which can cause velocity estimation spikes.
-  static long left_total_counts = 0;
-  static long right_total_counts = 0;
-
   int16_t count = 0;
   if (i == LEFT)
   {
     pcnt_get_counter_value(left_pcnt_unit, &count);
+    pcnt_counter_clear(left_pcnt_unit);
     left_total_counts += (long)count;              // accumulate signed delta
-    pcnt_counter_clear(left_pcnt_unit);            // reset hardware counter to 0 for next window
     esp32_left_enc_pos_shadow = left_total_counts; // keep shadow in sync for any external use
     return left_total_counts;
   }
   else
   {
     pcnt_get_counter_value(right_pcnt_unit, &count);
-    right_total_counts += (long)count;
     pcnt_counter_clear(right_pcnt_unit);
+    right_total_counts += (long)count;
     esp32_right_enc_pos_shadow = right_total_counts;
     return right_total_counts;
   }
@@ -230,11 +228,13 @@ void resetEncoder(int i)
   {
     pcnt_counter_clear(left_pcnt_unit);
     esp32_left_enc_pos_shadow = 0L; // Reset shadow too
+    left_total_counts = 0L;         // Reset software total to keep semantics consistent
   }
   else
   {
     pcnt_counter_clear(right_pcnt_unit);
     esp32_right_enc_pos_shadow = 0L; // Reset shadow too
+    right_total_counts = 0L;          // Reset software total
   }
 #else // AVR
   noInterrupts(); // Protect write of volatile variable
